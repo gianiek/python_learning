@@ -1,44 +1,55 @@
 import requests
 import csv
 import json
+from tqdm import tqdm
 
-# API URL base and authorization header
-url_base = "https://api.radar-staging.com"
-headers = {
-    "Authorization": "prj_test_pk_f9f8d237e74a54a12eca835199b111cc2c11e148"
-}
-
-# Counters to keep track of speed and speed_limit
 speed_count = 0
-speed_limit_count = 0
+speedLimit_count = 0
+error_count = 0
 
-# Read from input.csv
-with open('input.csv', 'r') as f:
-    reader = csv.DictReader(f)
-    for row in reader:
-        request_data = json.loads(row['request'])
+with open('input_with_response.csv', mode='w', newline='') as output_csv_file:
+    fieldnames = ['request', 'response', 'speedCount', 'speedLimitCount']
+    csv_writer = csv.DictWriter(output_csv_file, fieldnames=fieldnames)
+    csv_writer.writeheader()
 
-        # Set roadAttributes to "speedLimit" if not found
-        if 'roadAttributes' not in request_data["query"]:
-            request_data["query"]["roadAttributes"] = "speedLimit"
+    with open('input.csv', mode='r') as input_csv_file:
+        csv_reader = csv.DictReader(input_csv_file)
 
-        url_path = request_data["path"]
-        query = request_data["query"]
+        for row in tqdm(csv_reader, desc='Processing API calls'):
+            request_data = json.loads(row['request'])
 
-        response = requests.get(f"{url_base}{url_path}", headers=headers, params=query)
-        response_data = response.json()
+            road_attributes = []
 
-        if 'edges' in response_data:
-            for edge in response_data['edges']:
-                if 'speed' in edge:
-                    speed_count += 1
-                elif 'speedLimit' in edge:
-                    speed_limit_count += 1
+            url = "https://api.radar-staging.com/v1/route/match"
+            response = requests.get(url, params=request_data['query'], headers={"Authorization": "prj_test_pk_f9f8d237e74a54a12eca835199b111cc2c11e148"})
 
-        # Print the response data
-        print("Response:", response_data)
+            local_speed_count = 0
+            local_speedLimit_count = 0
 
-# Calculate and print the percentages
-total_count = speed_count + speed_limit_count
-print(f"Speed Count: {speed_count} ({(speed_count / total_count) * 100}%)")
-print(f"Speed Limit Count: {speed_limit_count} ({(speed_limit_count / total_count) * 100}%)")
+            if response.status_code == 200:
+                # New: Look in the 'edges' array for 'speed'
+                edges = response.json().get('edges', [])
+                for edge in edges:
+                    if 'speed' in edge:
+                        local_speed_count += 1
+
+                # New: Look in 'roadAttributes' for 'speedLimit'
+                road_attributes = response.json().get('roadAttributes', {})
+                if 'speedLimit' in road_attributes:
+                    local_speedLimit_count += 1
+
+                speed_count += local_speed_count
+                speedLimit_count += local_speedLimit_count
+            else:
+                error_count += 1
+
+            row['response'] = response.json()
+            row['speedCount'] = local_speed_count
+            row['speedLimitCount'] = local_speedLimit_count
+            csv_writer.writerow(row)
+
+            print(f"Speed: {speed_count}, Speed Limit: {speedLimit_count}, Errors: {error_count}", end='\r')
+
+print(f"\nTotal Speed Count: {speed_count}")
+print(f"Total Speed Limit Count: {speedLimit_count}")
+print(f"Total Error Count: {error_count}")
